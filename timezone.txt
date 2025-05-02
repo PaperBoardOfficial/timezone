@@ -1,0 +1,73 @@
+Timezone handling
+Goal: Ensure time extracted from emails is correctly interpreted, converted to the user's local timezone, and saved/displayed in all needed formats. The app should support accurate scheduling even when emails include timezones different from the user's.
+Overall Flow: Reply Mode 
+We're working on the reply mode flow in the extension. 
+Here's how it currently works and where I tried to add timezone conversion:
+[Email content] → [OpenAI extraction] → [Time conversion] → [Slot generation] → [Filtering] → [Final slot with all formats]
+Step 1: Extract Dates from Email via OpenAI
+The extension sends the email content to OpenAI using the prompt in email-analysis-prompt.ts.
+
+OpenAI returns extracted dates and times, flagged as:
+    1. Specific time - e.g., "Tuesday at 3pm"
+
+    2. Time range - e.g., "between 2-5pm"
+
+    3. Whole day availability - e.g., "I'm free all day Tuesday"
+Each extracted time includes (if available):
+    • originalStart / originalEnd - the time mentioned in the email (e.g., "3pm")
+
+    • sourceTimezone - IANA timezone if detected (e.g., America/New_York)
+    
+Step 2: Time Conversion
+App compares sourceTimezone to the user's local timezone. This task is handled by timezone-conversion-service.ts
+
+If they are different:
+    • Convert all times (originalStart / originalEnd) to user's local time and pass it further. 
+
+Step 3: Generate Candidate Slots
+In extension-routes.ts:
+    • Specific times are passed directly into the filtering pipeline.
+
+    • Time ranges and whole day availability are first split into smaller slots based on the meeting duration:
+
+        ◦ If a duration is explicitly mentioned in the email, the app uses it.
+
+        ◦ If not, it falls back to user preferences.
+Step 4: Filter Slots
+All candidate slots go through the filtering pipeline. After filtering, the app identifies the final slot to suggest to the user.
+
+
+Step 5: Time Conversion
+The final slot should be enriched with missing time information. It should have: 
+
+{
+  "start": "2025-05-06T16:00:00",             // Same as startLocal; used for UI compatibility
+  "end": "2025-05-06T16:30:00",               // Same as endLocal; used for UI compatibility
+  "startLocal": "2025-05-06T16:00:00",        // Start in user’s local time
+  "endLocal": "2025-05-06T16:30:00",          // End in user’s local time
+  "startUTC": "2025-05-06T13:00:00Z",         // Start in UTC for DB storage
+  "endUTC": "2025-05-06T13:30:00Z",           // End in UTC for DB storage
+  "startSource": "2025-05-06T09:00:00"          // Start in the timezone extracted from the email
+  "endSource": 2025-05-06T09:30:00,                       // End in the timezone extracted from the email
+  "sourceTimezone": "America/New_York",       // IANA format of the timezone from email
+  "sourceTime": "ET",                         // Casual/abbreviation format of source timezone
+  "localTimezone": "Europe/Kyiv",             // IANA format of user’s local timezone
+  "localTime": "EEST",                        // Casual/abbreviation format of local timezone
+  "fromTimeRange": true,                      // True if generated from a time range
+  "isTimeRange": false,                       // Always false for final slot
+  "isAllDay": false,                          // Always false for final slot
+  "isSpecificTime": true                      // Always true for final slot
+}
+
+
+Key files
+email-analysis-prompt.ts – OpenAI prompt that extracts dates, times, and timezones.
+
+extension-routes.ts – Orchestrates slot generation and filtering; handles raw AI output.
+
+timezone-conversion-service.ts – Should perform timezone conversions.
+
+Known Problems 
+    • Incorrect time conversion: e.g., "9 AM ET" being converted to 5 PM EEST instead of the correct 4 PM.
+    • Final slot often lacks the original time representation (startSource, endSource)
+
